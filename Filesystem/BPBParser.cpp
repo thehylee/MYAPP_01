@@ -291,13 +291,20 @@ namespace FAT32Recovery
         m_info.clusterSize =
             static_cast<uint64_t>(bps) * spc;
 
-        // FAT positions: absolute image sectors
+        // FAT positions: absolute image byte offsets
+        const uint64_t partitionByteOffset =
+            static_cast<uint64_t>(m_info.partitionStart) *
+            m_info.bytesPerSector;
+
         m_info.fat1Start =
-            static_cast<uint64_t>(m_info.partitionStart) +
-            m_info.reservedSectors;
+            partitionByteOffset +
+            static_cast<uint64_t>(m_info.reservedSectors) *
+            m_info.bytesPerSector;
 
         m_info.fat2Start =
-            m_info.fat1Start + m_info.fatSize;
+            m_info.fat1Start +
+            static_cast<uint64_t>(m_info.fatSize) *
+            m_info.bytesPerSector;
 
         m_info.firstDataSector =
             static_cast<uint64_t>(m_info.partitionStart) +
