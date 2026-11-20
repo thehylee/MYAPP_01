@@ -87,8 +87,11 @@ namespace FAT32Recovery
             static_cast<uint64_t>(m_info.fatSize) *
             m_info.bytesPerSector;
 
-        if (entryOffset > fatSizeBytes - 4)
+        if (fatSizeBytes < 4 ||
+            entryOffset > fatSizeBytes - 4)
+        {
             return false;
+        }
 
         if (fatStart >
             UINT64_MAX - entryOffset)
