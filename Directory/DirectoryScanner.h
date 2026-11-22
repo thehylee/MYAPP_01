@@ -30,7 +30,7 @@ namespace FAT32Recovery
 
         uint8_t attributes = 0;
 
-        uint8_t firstClusterHigh = 0;
+        uint16_t firstClusterHigh = 0;
         uint16_t firstClusterLow = 0;
 
         uint32_t startCluster = 0;
