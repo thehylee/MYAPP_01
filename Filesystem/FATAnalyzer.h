@@ -5,6 +5,9 @@
 
 #include <cstdint>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
+
 
 namespace FAT32Recovery
 {
@@ -57,6 +60,31 @@ namespace FAT32Recovery
         std::vector<FATInvalidEntry> invalidEntries;
     };
 
+    struct FATChainCandidate
+    {
+        uint32_t startCluster = 0;
+        uint32_t endCluster = 0;
+
+        uint64_t clusterCount = 0;
+
+        bool reachesEOC = false;
+        bool hasInvalidEntry = false;
+        bool hasCycle = false;
+        bool readError = false;
+    };
+
+    struct FATReverseAnalysisResult
+    {
+        uint64_t totalNextEntries = 0;
+        uint64_t totalEOCEntries = 0;
+
+        uint64_t startCandidates = 0;
+        uint64_t isolatedClusters = 0;
+        uint64_t referencedClusters = 0;
+
+        std::vector<FATChainCandidate> candidates;
+    };
+
     class FATAnalyzer
     {
     public:
@@ -73,6 +101,11 @@ namespace FAT32Recovery
 
         // 분석 결과 출력
         void PrintReport() const;
+
+        FATReverseAnalysisResult AnalyzeFAT2Reverse(
+            uint32_t minimumCluster,
+            uint32_t maximumCluster
+        );
 
     private:
 
