@@ -230,4 +230,121 @@ namespace FAT32Recovery
             << "Invalid Entries     : "
             << m_result.invalidEntries.size() << '\n';
     }
+
+    FATReverseAnalysisResult FATAnalyzer::AnalyzeFAT2Reverse(
+        uint32_t minimumCluster,
+        uint32_t maximumCluster
+    )
+    {
+        FATReverseAnalysisResult result;
+
+        std::unordered_map<uint32_t, uint32_t> nextMap;
+        std::unordered_map<uint32_t, uint32_t> incoming;
+
+        if (minimumCluster < 2 ||
+            maximumCluster < minimumCluster)
+        {
+            return result;
+        }
+
+        // ====================================
+        // 1. FAT2 연결 정보 수집
+        // ====================================
+
+        for (uint32_t cluster = minimumCluster;
+            cluster <= maximumCluster;
+            ++cluster)
+        {
+            FATEntry entry;
+
+            if (!m_reader.ReadFAT2(cluster, entry))
+                continue;
+
+            if (entry.type == FATEntryType::NextCluster)
+            {
+                if (entry.value < minimumCluster ||
+                    entry.value > maximumCluster)
+                {
+                    continue;
+                }
+
+                nextMap[cluster] = entry.value;
+                ++incoming[entry.value];
+
+                ++result.totalNextEntries;
+            }
+            else if (entry.type == FATEntryType::EndOfChain)
+            {
+                ++result.totalEOCEntries;
+            }
+        }
+
+        // ====================================
+        // 2. 시작점 후보 검색
+        // ====================================
+
+        for (const auto& item : nextMap)
+        {
+            const uint32_t start = item.first;
+
+            if (incoming[start] != 0)
+                continue;
+
+            FATChainCandidate candidate;
+
+            candidate.startCluster = start;
+
+            std::unordered_set<uint32_t> visited;
+
+            uint32_t current = start;
+
+            while (true)
+            {
+                if (!visited.insert(current).second)
+                {
+                    candidate.hasCycle = true;
+                    break;
+                }
+
+                ++candidate.clusterCount;
+                candidate.endCluster = current;
+
+                auto it = nextMap.find(current);
+
+                if (it == nextMap.end())
+                    break;
+
+                current = it->second;
+
+                FATEntry nextEntry;
+
+                if (!m_reader.ReadFAT2(current, nextEntry))
+                    break;
+
+                if (nextEntry.type ==
+                    FATEntryType::EndOfChain)
+                {
+                    candidate.endCluster = current;
+                    ++candidate.clusterCount;
+                    candidate.reachesEOC = true;
+                    break;
+                }
+
+                if (nextEntry.type !=
+                    FATEntryType::NextCluster)
+                {
+                    candidate.hasInvalidEntry = true;
+                    break;
+                }
+            }
+
+            result.candidates.push_back(candidate);
+            ++result.startCandidates;
+        }
+
+        result.referencedClusters = incoming.size();
+
+        return result;
+    }
+
 }
