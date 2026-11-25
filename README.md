@@ -661,87 +661,169 @@ FileExtractor는 필요하다면 신규 설계한다.
 
 ---
 
-# 8\. 현재 가장 중요한 기술적 문제
+## 8\. 기존 파일시스템 분석 결과
 
-## 8.1 오프셋 계산 검증
+### 8.1 Root Directory 분석
 
-최우선 확인 사항이다.
+초기 분석 결과:
 
-현재 BPB 계산 결과:
+- Root Cluster: 2
+- Root Offset: 8,454,144
+- Root Size: 4,096 bytes
+
+디렉터리 엔트리 분석:
+
+| 이름 | 종류 | Cluster |
+| --- | --- | --- |
+| SYSTEM\~1 | Directory | 6 |
+| LFN 엔트리 | LFN | 0 |
+| LFN 엔트리 | LFN | 0 |
+
+Root Directory에서 일반 파일을 발견하지 못했다.
+
+현재 확인된 디렉터리 트리:
 
 text
 
 ```text
-Root Cluster 2
-Expected Offset 8454144
-Expected HEX 0x810000
+[ROOT] /
+  [DIR] SYSTEM~1
 ```
 
-기존 로그:
+파일 추출 결과:
 
-text
+- Files: 0
+- Directories: 1
+- Deleted Files: 0
+- Deleted Directories: 0
+- Total Bytes: 0
 
-```text
-Root Offset 8519680
-HEX 0x820000
-```
+### 8.2 FAT1 / FAT2 Root Cluster 비교
 
-이 차이를 설명할 수 있는 기존 코드와 실제 이미지 RAW 데이터를 대조해야 한다.
+Cluster 2:
 
-오프셋 계산 오류가 존재한다면 다음 모든 모듈에 영향을 줄 수 있다.
+| 항목 | FAT1 | FAT2 |
+| --- | --- | --- |
+| Raw | 0x5 | 0x0 |
+| Value | 0x5 | 0x0 |
+| Type | NEXT\_CLUSTER | FREE |
 
-- DirectoryScanner
-- TreeBuilder
-- FileExtractor
-- DeletedFileScanner
-- OrphanScanner
-- FileCarver
+Cluster 3\~8에서도 FAT1과 FAT2의 차이가 확인되었다.
 
-따라서 신규 복구 모듈을 작성하기 전에 먼저 검증한다.
+FAT1에는 디렉터리 관련 엔트리가 존재하지만 FAT2에는 FREE로 기록되어 있다.
 
-## 8.2 Primary/Backup VBR 비교
-
-LBA 128과 LBA 134는 각각 Primary VBR 및 Backup VBR 후보이다.
-
-BPBParser에 다음 분석을 추가하는 것을 권장한다.
-
-- Bytes Per Sector 비교
-- Sectors Per Cluster 비교
-- Reserved Sector 비교
-- FAT Count 비교
-- Total Sectors 비교
-- FAT Size 비교
-- Root Cluster 비교
-- FSInfo Sector 비교
-- Backup Sector 비교
-- Boot Signature 비교
-
-비교 결과는 보고서로 기록하고 어느 한쪽을 자동으로 덮어쓰지 않는다.
-
-## 8.3 FAT1/FAT2 독립 분석
-
-두 FAT를 무조건 하나로 통합하지 않는다.
-
-각각의 원본 값과 체인 결과를 보존한다.
-
-활성 FAT 설정 및 FAT mirroring 설정을 확인한다.
-
-FAT1과 FAT2의 불일치는 별도 분석 결과로 기록한다.
-
-## 8.4 FAT 통계 범위 구분
-
-다음 두 가지 통계를 구분한다.
-
-1. FAT 전체 엔트리 통계
-2. 실제 데이터 클러스터 통계
-
-FAT 전체 엔트리는 981248개이고 데이터 클러스터 수는 981232개다.
-
-서로 다른 집계 범위의 결과를 직접 비교하지 않는다.
+따라서 현재 디렉터리 복구에서는 FAT1이 중요한 분석 자료다.
 
 ---
 
-# 9\. 향후 개발 순서
+## 9\. FAT1 / FAT2 전체 비교
+
+전체 분석 결과:
+
+### FAT1 통계
+
+| 종류 | 개수 |
+| --- | --- |
+| Total Entries | 981,232 |
+| Free | 981,225 |
+| Reserved | 0 |
+| Next Cluster | 1 |
+| Bad Cluster | 0 |
+| End Of Chain | 6 |
+| Invalid | 0 |
+
+### FAT2 통계
+
+| 종류 | 개수 |
+| --- | --- |
+| Total Entries | 981,232 |
+| Free | 956,516 |
+| Reserved | 15 |
+| Next Cluster | 21,403 |
+| Bad Cluster | 0 |
+| End Of Chain | 248 |
+| Invalid | 3,050 |
+
+### FAT 비교 결과
+
+- Matching Entries: 956,509
+- Mismatching Entries: 24,723
+- Invalid Entries: 3,050
+
+불일치 유형:
+
+| 유형 | 개수 |
+| --- | --- |
+| FAT1 Free / FAT2 Next | 21,403 |
+| FAT1 Next / FAT2 Free | 1 |
+| FAT1 Free / FAT2 EOC | 248 |
+| FAT1 EOC / FAT2 Free | 6 |
+| Both Next Different | 0 |
+| Invalid Related | 3,050 |
+| Other Mismatches | 15 |
+
+FAT2에는 FAT1보다 많은 연결 정보가 남아 있다.
+
+그러나 FAT2 엔트리만으로 실제 파일 체인을 확정할 수는 없다.
+
+---
+
+## 10\. FAT2 이상 데이터 분포
+
+특정 클러스터 영역에 FAT2의 비정상 엔트리가 집중되어 있다.
+
+특히 다음 영역을 주의해서 분석해야 한다.
+
+- 716800 \~ 741375
+- 782336 \~ 790527
+- 839680 \~ 851967
+- 962560 \~ 970751
+
+716800\~741375 영역에서는 다수의 NextCluster 및 EOC 엔트리가 발견되었다.
+
+782336\~790527 영역에서는 Invalid 엔트리가 집중적으로 발견되었다.
+
+이러한 분포는 추가 분석이 필요한 근거이지만, 특정 영역이 실제 파일 데이터라고 확정된 것은 아니다.
+
+---
+
+# 11\. 현재 가장 중요한 기술적 문제
+
+## 11.1 FAT2 Reverse Analysis 작업
+
+FAT2에 남아 있는 연결 정보를 역방향 그래프로 구성하여 파일 체인 시작점과 종료점을 찾는 작업이다.
+원칙적으로 조사 범위 안에서 Incoming 참조가 없는 NextCluster 엔트리를 시작점 후보로 분류한다.
+단, 조사 범위 밖에서 들어오는 참조는 현재 범위만으로 확인할 수 없다.
+
+## 11.2 FAT2 연결 분포 확인
+
+먼저 다음 세 가지를 구분한다.
+
+- 조사 범위 내부 연결
+- 조사 범위 외부 연결
+- 유효하지 않은 연결 대상
+
+## 11.3 FAT2 전체 범위 연결 분석
+
+현재는 조사 영역만 분석하고 있다.
+다음 단계에서는 FAT2 전체 클러스터를 대상으로 연결 정보를 수집하고 역방향 참조를 계산해야 한다.
+이렇게 해야 조사 영역 밖에서 들어오는 참조까지 확인할 수 있다.
+
+## 11.4 실제 체인 검증
+
+시작점 후보를 발견하면 다음을 확인한다.
+
+- 실제 FAT2에서 다음 클러스터를 읽는다.
+- 조사 영역 밖으로 이동해도 추적한다.
+- EOC 도달 여부를 확인한다.
+- FREE 도달 여부를 확인한다.
+- Invalid 도달 여부를 확인한다.
+- Cycle 여부를 확인한다.
+- 읽기 실패를 별도로 기록한다.
+
+---
+
+# 12\. 향후 개발 순서
 
 기존 개발 우선순위를 유지하되 오프셋 검증 작업을 먼저 진행한다.
 
@@ -766,7 +848,7 @@ FAT 전체 엔트리는 981248개이고 데이터 클러스터 수는 981232개�
 
 ---
 
-# 10\. 신규 FileExtractor 설계 요구사항
+# 13\. 신규 FileExtractor 설계 요구사항
 
 FileExtractor는 기존 구현을 참고하되 필요하면 새롭게 설계한다.
 
@@ -810,7 +892,7 @@ FAT1과 FAT2 중 하나를 무조건 선택하지 않는다.
 
 ---
 
-# 11\. 신규 DirectoryTraversal 설계 요구사항
+# 14\. 신규 DirectoryTraversal 설계 요구사항
 
 기존 DirectoryScanner와 TreeBuilder를 최대한 활용한다.
 
@@ -845,7 +927,7 @@ FAT 체인이 FREE, INVALID, BAD 또는 순환 상태이면 정상 체인으로 
 
 ---
 
-# 12\. 전체 프로젝트 디렉터리 구조
+# 15\. 전체 프로젝트 디렉터리 구조
 
 text
 
@@ -908,7 +990,7 @@ FAT32Recovery/
 
 ---
 
-# 13\. 코드 작성 규칙
+# 16\. 코드 작성 규칙
 
 1. 신규 코드 작성 전에 관련 기존 소스를 확인한다.
 2. 실제 존재하는 인터페이스를 기준으로 작성한다.
@@ -938,7 +1020,7 @@ FAT32Recovery/
 
 ---
 
-# 14\. 테스트 및 검증 규칙
+# 17\. 테스트 및 검증 규칙
 
 모듈별 독립 테스트를 실시한다.
 
@@ -962,62 +1044,27 @@ FAT32Recovery/
 
 ---
 
-# 15\. 다음 채팅에서 바로 진행할 작업
+# 18\. 바로 진행할 작업
 
-다음 채팅에서는 아래 순서로 이어서 진행한다.
+**첫 번째 작업: FAT2 연결 정보의 신뢰성 검증**
 
-**첫 번째 작업: 기존 소스 인터페이스 확인**
+전체 FAT2 연결 그래프를 구성하고 실제 파일 체인을 찾아야 한다.
 
-확인 대상:
+- FAT1 / FAT2 손상 정도 파악
 
-- Core/DiskImage.h
-- Core/DiskImage.cpp
-- Filesystem/BPBParser.h
-- Filesystem/BPBParser.cpp
-- Filesystem/FATReader.h
-- Filesystem/FATReader.cpp
-- Filesystem/FATChainAnalyzer.h
-- Filesystem/FATChainAnalyzer.cpp
-- Directory/DirectoryScanner.h
-- Directory/DirectoryScanner.cpp
-- Directory/TreeBuilder.h
-- Directory/TreeBuilder.cpp
-- Directory/LFNParser.h
-- Directory/LFNParser.cpp
-
-**두 번째 작업: Root Offset 계산 검증**
-
-기준값:
-
-text
-
-```text
-Partition Start: 128
-Data Start Absolute Sector: 16512
-Bytes Per Sector: 512
-Cluster Size: 4096
-Root Cluster: 2
-
-Expected Root Offset:
-8454144 bytes
-
-Expected HEX:
-0x810000
-```
-
-기존 로그의 8519680 bytes와 차이가 발생한 원인을 확인한다.
-
-**세 번째 작업: BPBParser Primary/Backup 비교**
-
-LBA 128과 LBA 134의 실제 BPB 필드를 비교한다.
-
-**네 번째 작업: DirectoryTraversal 신규 구현**
+**두 번째 작업: DirectoryTraversal 신규 구현**
 
 기존 DirectoryScanner와 TreeBuilder 인터페이스를 활용한다.
 
-**다섯 번째 작업: FileExtractor 신규 구현**
+- 유효한 디렉터리 체인 확인
+- 삭제되거나 손상된 파일의 체인 확인
+
+**세 번째 작업: FileExtractor 신규 구현**
 
 FAT1/FAT2 독립 분석 결과를 활용하는 읽기 전용 추출기를 구현한다.
+
+- 실제 파일 데이터 추출
+- 복구 결과 검증
 
 ---
 
@@ -1053,4 +1100,4 @@ FAT1/FAT2 독립 분석 결과를 활용하는 읽기 전용 추출기를 구현
 5. 원본 BIN은 항상 읽기 전용으로 유지한다.
 6. 각 모듈을 독립적으로 테스트한 후 통합한다.
 
-**다음 채팅은 기존 GitHub 소스 인터페이스 확인과 Root Offset 계산 검증부터 시작한다. FileExtractor 신규 구현은 이 검증을 마친 후 진행한다.**
+**기존 GitHub 소스 인터페이스 확인과 FAT2 연결 정보의 신뢰성 검증부터 시작한다. FileExtractor 신규 구현은 이 검증을 마친 후 진행한다.**
